@@ -1,64 +1,96 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#include <stdio.h>  
+#include <stdlib.h>  
+#include <string.h>  
+#include <sys/ipc.h>  
+#include <sys/msg.h>  
+#include <sys/wait.h>  
+#include <unistd.h>  
 
+#define MSG_KEY 1234  
+#define MSG_SIZE 100  
+#define MSG_NORMAL 1  
+#define MSG_EXIT 2  
 
-struct message {
-    long mtype; 
-    char mtext[100];
-};
+// 消息结构体  
+typedef struct {  
+    long mtype;  
+    char mtext[MSG_SIZE];  
+} Message;  
 
-int main() {
-    int msgid;
-    struct message msg;
-    pid_t pid;
-    
-    msgid = msgget((key_t)1234, 0666 | IPC_CREAT);
-    if (msgid == -1) {
-        perror("msgget error");
-        exit(1);
-    }
+// 错误处理函数  
+void handle_error(const char *msg) {  
+    perror(msg);  
+    exit(EXIT_FAILURE);  
+}  
 
-    pid = fork();
-    if (pid == 0) {
-        char buffer[100];
-        while (1) {
-            printf("Enter message (type 'exit' to quit): ");
-            fgets(buffer, sizeof(buffer), stdin);
-            if (strncmp(buffer, "exit", 4) == 0) {
-                break;
-            }
-            msg.mtype = 1; // 设置消息类型
-            strncpy(msg.mtext, buffer, sizeof(msg.mtext) - 1);
-            if (msgsnd(msgid, &msg, sizeof(msg.mtext), 0) == -1) {
-                perror("msgsnd error");
-                exit(1);
-            }
-        }
-        msg.mtype = 2; // 发送退出消息
-        msgsnd(msgid, &msg, sizeof(msg.mtext), 0);
-        exit(0);
-    } else if (pid > 0) {
-        while (1) {
-            if (msgrcv(msgid, &msg, sizeof(msg.mtext), 1, 0) == -1) {
-                perror("msgrcv error");
-                exit(1);
-            }
-            printf("Received message: %s\n", msg.mtext);
-            if (msg.mtype == 2) { // 接收到退出消息
-                break;
-            }
-        }
-        msgctl(msgid, IPC_RMID, NULL);
-        wait(NULL); 
-        exit(0);
-    } else {
-        perror("fork error");
-        exit(1);
-    }
-    return 0;
+// 子进程处理函数  
+void child_process(int msgid) {  
+    Message msg;  
+    char buffer[MSG_SIZE];  
+
+    while (1) {  
+        printf("Enter message (type 'exit' to quit): ");  
+        fgets(buffer, sizeof(buffer), stdin);  
+        
+        if (strncmp(buffer, "exit", 4) == 0) {  
+            break;  
+        }  
+
+        msg.mtype = MSG_NORMAL;  
+        strncpy(msg.mtext, buffer, sizeof(msg.mtext) - 1);  
+        
+        if (msgsnd(msgid, &msg, sizeof(msg.mtext), 0) == -1) {  
+            handle_error("msgsnd error");  
+        }  
+    }  
+
+    // 发送退出消息  
+    msg.mtype = MSG_EXIT;  
+    msgsnd(msgid, &msg, sizeof(msg.mtext), 0);  
+    exit(EXIT_SUCCESS);  
+}  
+
+// 父进程处理函数  
+void parent_process(int msgid) {  
+    Message msg;  
+
+    while (1) {  
+        if (msgrcv(msgid, &msg, sizeof(msg.mtext), MSG_NORMAL, 0) == -1) {  
+            handle_error("msgrcv error");  
+        }  
+
+        printf("Received message: %s", msg.mtext);  
+
+        if (msg.mtype == MSG_EXIT) {  
+            break;  
+        }  
+    }  
+
+    // 清理消息队列  
+    msgctl(msgid, IPC_RMID, NULL);  
+    wait(NULL);  
+    exit(EXIT_SUCCESS);  
+}  
+
+int main() {  
+    // 创建消息队列  
+    int msgid = msgget((key_t)MSG_KEY, 0666 | IPC_CREAT);  
+    if (msgid == -1) {  
+        handle_error("msgget error");  
+    }  
+
+    // 创建子进程  
+    pid_t pid = fork();  
+    if (pid == -1) {  
+        handle_error("fork error");  
+    }  
+
+    // 根据进程ID执行相应功能  
+    if (pid == 0) {  
+        child_process(msgid);  
+    } else {  
+        parent_process(msgid);  
+    }  
+
+    return 0;  
 }
